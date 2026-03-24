@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CamDB Search</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; padding: 20px; }
+
+input, button { font-family: monospace; font-size: 14px; }
+input[type=text] {
+	width: 100%; max-width: 600px; padding: 10px; font-size: 16px;
+	background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; outline: none;
+}
+input[type=text]:focus { border-color: #888; }
+
+#results { max-width: 600px; margin-top: 2px; border: 1px solid #444; display: none; max-height: 400px; overflow-y: auto; }
+.item { padding: 6px 10px; cursor: pointer; font-size: 14px; }
+.item:hover { background: #333; }
+.item.selected { background: #2a3a2a; }
+.item.disabled { opacity: 0.35; cursor: default; }
+.type { color: #888; font-size: 12px; margin-right: 8px; display: inline-block; width: 50px; }
+.preset .type { color: #e6a23c; }
+.brand .type { color: #67c23a; }
+.model .type { color: #409eff; }
+#info { color: #666; font-size: 12px; margin-top: 8px; max-width: 600px; }
+
+#selected-panel { max-width: 600px; margin-top: 16px; display: none; }
+#selected-panel h3 { font-size: 14px; color: #888; margin-bottom: 8px; }
+#selected-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { padding: 4px 8px; background: #2a2a2a; border: 1px solid #444; font-size: 12px; cursor: pointer; }
+.tag:hover { border-color: #c44; color: #c44; }
+.tag .tag-type { color: #666; margin-right: 4px; }
+
+#build-section { max-width: 600px; margin-top: 16px; display: none; }
+#build-section .fields { display: flex; gap: 8px; margin-bottom: 8px; }
+#build-section .fields input { flex: 1; padding: 8px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; outline: none; }
+#build-section .fields input:focus { border-color: #888; }
+#build-btn { padding: 8px 20px; background: #333; color: #e0e0e0; border: 1px solid #555; cursor: pointer; }
+#build-btn:hover { background: #444; }
+.cb-row { margin-bottom: 8px; color: #888; font-size: 13px; cursor: pointer; }
+.cb-row input { margin-right: 6px; }
+
+#streams-output { max-width: 600px; margin-top: 16px; display: none; }
+#streams-output h3 { font-size: 14px; color: #888; margin-bottom: 8px; }
+#streams-list { background: #2a2a2a; border: 1px solid #444; padding: 10px; font-size: 12px; max-height: 500px; overflow-y: auto; word-break: break-all; }
+#streams-list div { padding: 2px 0; border-bottom: 1px solid #333; }
+#streams-count { color: #666; font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<input type="text" id="q" placeholder="Search cameras..." autofocus>
+<div id="results"></div>
+<div id="info"></div>
+
+<div id="selected-panel">
+	<h3>Selected (click to remove):</h3>
+	<div id="selected-list"></div>
+</div>
+
+<div id="build-section">
+	<div class="fields">
+		<input type="text" id="f-ip" placeholder="IP (required)">
+		<input type="text" id="f-user" placeholder="Username">
+		<input type="text" id="f-pass" placeholder="Password">
+		<input type="text" id="f-channel" placeholder="Channel" value="0">
+	</div>
+	<label class="cb-row"><input type="checkbox" id="f-onvif">ONVIF</label>
+	<button id="build-btn">Build URLs</button>
+</div>
+
+<div id="streams-output">
+	<h3>Streams:</h3>
+	<div id="streams-list"></div>
+	<div id="streams-count"></div>
+</div>
+
+<script>
+const api = location.port === '9381' ? 'http://' + location.hostname + ':9380' : '';
+const selected = new Map(); // id -> {type, name}
+let timer;
+let lastItems = []; // cache for updateHighlights
+
+const $ = id => document.getElementById(id);
+
+// selected brand_ids as Set, ex. {"zosi", "hikvision"}
+function getSelectedBrands() {
+	const brands = new Set();
+	for (const [id, item] of selected) {
+		if (item.type === 'brand') brands.add(id.slice(2)); // "b:zosi" -> "zosi"
+	}
+	return brands;
+}
+
+// check if model's brand is selected, ex. "m:zosi:ZG23213M" -> brandId "zosi"
+function isModelBrandSelected(modelId) {
+	return getSelectedBrands().has(modelId.split(':')[1]);
+}
+
+// -- search --
+
+$('q').addEventListener('input', () => {
+	clearTimeout(timer);
+	timer = setTimeout(search, 150);
+});
+$('q').addEventListener('focus', () => {
+	if (!$('results').childNodes.length) search();
+});
+
+async function search() {
+	const start = performance.now();
+	const resp = await fetch(api + '/api/search?q=' + encodeURIComponent($('q').value));
+	const ms = (performance.now() - start).toFixed(0);
+	const data = await resp.json();
+	lastItems = data.results || [];
+
+	$('results').replaceChildren();
+
+	if (lastItems.length === 0) {
+		$('results').style.display = 'none';
+		$('info').textContent = 'No results (' + ms + 'ms)';
+		return;
+	}
+
+	$('results').style.display = 'block';
+	renderResults();
+	$('info').textContent = lastItems.length + ' results (' + ms + 'ms)';
+}
+
+function renderResults() {
+	const brands = getSelectedBrands();
+	$('results').replaceChildren();
+
+	for (const r of lastItems) {
+		const disabled = r.type === 'model' && brands.has(r.id.split(':')[1]);
+
+		const div = document.createElement('div');
+		div.className = 'item ' + r.type;
+		if (selected.has(r.id)) div.classList.add('selected');
+		if (disabled) div.classList.add('disabled');
+		div.dataset.id = r.id;
+
+		const typeSpan = document.createElement('span');
+		typeSpan.className = 'type';
+		typeSpan.textContent = r.type;
+		div.appendChild(typeSpan);
+		div.appendChild(document.createTextNode(r.name));
+
+		div.addEventListener('click', () => {
+			if (disabled) return;
+
+			if (selected.has(r.id)) {
+				selected.delete(r.id);
+			} else {
+				// if selecting brand, remove its individual models
+				if (r.type === 'brand') {
+					const prefix = 'm:' + r.id.slice(2) + ':';
+					for (const id of selected.keys()) {
+						if (id.startsWith(prefix)) selected.delete(id);
+					}
+				}
+				selected.set(r.id, {type: r.type, name: r.name});
+			}
+			renderSelected();
+			renderResults();
+		});
+
+		$('results').appendChild(div);
+	}
+}
+
+// -- selected panel --
+
+function renderSelected() {
+	$('selected-list').replaceChildren();
+
+	const show = selected.size > 0;
+	$('selected-panel').style.display = show ? 'block' : 'none';
+	$('build-section').style.display = show ? 'block' : 'none';
+
+	for (const [id, item] of selected) {
+		const tag = document.createElement('span');
+		tag.className = 'tag';
+
+		const typeSpan = document.createElement('span');
+		typeSpan.className = 'tag-type';
+		typeSpan.textContent = item.type;
+		tag.appendChild(typeSpan);
+		tag.appendChild(document.createTextNode(item.name));
+
+		tag.addEventListener('click', () => {
+			selected.delete(id);
+			renderSelected();
+			renderResults();
+		});
+
+		$('selected-list').appendChild(tag);
+	}
+}
+
+// -- build streams --
+
+$('build-btn').addEventListener('click', buildStreams);
+
+async function buildStreams() {
+	const ip = $('f-ip').value.trim();
+	if (!ip) {
+		$('f-ip').style.borderColor = '#c44';
+		$('f-ip').focus();
+		return;
+	}
+	$('f-ip').style.borderColor = '#444';
+
+	const ids = Array.from(selected.keys()).join(',');
+	const params = new URLSearchParams({ids, ip});
+
+	const user = $('f-user').value.trim();
+	const pass = $('f-pass').value.trim();
+	const channel = $('f-channel').value.trim();
+
+	if (user) params.set('user', user);
+	if (pass) params.set('pass', pass);
+	if (channel && channel !== '0') params.set('channel', channel);
+	if ($('f-onvif').checked) params.set('onvif', 'true');
+
+	$('build-btn').textContent = '...';
+
+	try {
+		const resp = await fetch(api + '/api/streams?' + params);
+		if (!resp.ok) {
+			const text = await resp.text();
+			$('streams-list').replaceChildren();
+			const err = document.createElement('div');
+			err.style.color = '#c44';
+			err.textContent = text;
+			$('streams-list').appendChild(err);
+			$('streams-output').style.display = 'block';
+			$('streams-count').textContent = '';
+			return;
+		}
+
+		const data = await resp.json();
+		const streams = data.streams || [];
+
+		$('streams-list').replaceChildren();
+		for (const s of streams) {
+			const div = document.createElement('div');
+			div.textContent = s;
+			$('streams-list').appendChild(div);
+		}
+
+		$('streams-output').style.display = 'block';
+
+		let count = streams.length + ' streams';
+		if (data.onvif) count += ' + onvif';
+		$('streams-count').textContent = count;
+	} catch (e) {
+		$('streams-list').replaceChildren();
+		const err = document.createElement('div');
+		err.style.color = '#c44';
+		err.textContent = e.message;
+		$('streams-list').appendChild(err);
+		$('streams-output').style.display = 'block';
+	} finally {
+		$('build-btn').textContent = 'Build URLs';
+	}
+}
+</script>
+</body>
+</html>
