@@ -16,7 +16,7 @@ var defaultPorts = map[string]int{
 	"rtmp": 1935, "mms": 554, "rtp": 5004,
 }
 
-// StreamsHandler returns handler for GET /api/streams?ids=...&ip=...&user=...&pass=...&channel=0&onvif=true
+// StreamsHandler returns handler for GET /api/streams?ids=...&ip=...&user=...&pass=...&channel=0
 func StreamsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -36,7 +36,6 @@ func StreamsHandler(db *sql.DB) http.HandlerFunc {
 		user := q.Get("user")
 		pass := q.Get("pass")
 		channel, _ := strconv.Atoi(q.Get("channel"))
-		onvif := q.Get("onvif") == "true"
 
 		// Step 1. Collect raw streams from all ids
 		type raw struct {
@@ -143,11 +142,7 @@ func StreamsHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
 
-		resp := map[string]any{"streams": streams}
-		if onvif {
-			resp["onvif"] = true
-		}
-		json.NewEncoder(w).Encode(resp)
+		json.NewEncoder(w).Encode(map[string]any{"streams": streams})
 	}
 }
 

@@ -67,7 +67,6 @@ input[type=text]:focus { border-color: #888; }
 		<input type="text" id="f-pass" placeholder="Password">
 		<input type="text" id="f-channel" placeholder="Channel" value="0">
 	</div>
-	<label class="cb-row"><input type="checkbox" id="f-onvif">ONVIF</label>
 	<button id="build-btn">Build URLs</button>
 </div>
 
@@ -223,7 +222,6 @@ async function buildStreams() {
 	if (user) params.set('user', user);
 	if (pass) params.set('pass', pass);
 	if (channel && channel !== '0') params.set('channel', channel);
-	if ($('f-onvif').checked) params.set('onvif', 'true');
 
 	$('build-btn').textContent = '...';
 
@@ -253,9 +251,7 @@ async function buildStreams() {
 
 		$('streams-output').style.display = 'block';
 
-		let count = streams.length + ' streams';
-		if (data.onvif) count += ' + onvif';
-		$('streams-count').textContent = count;
+		$('streams-count').textContent = streams.length + ' streams';
 	} catch (e) {
 		$('streams-list').replaceChildren();
 		const err = document.createElement('div');
