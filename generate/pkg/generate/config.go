@@ -7,19 +7,6 @@ import (
 	"strings"
 )
 
-// supported schemes that go2rtc handles natively
-var supported = map[string]bool{
-	"rtsp": true, "rtsps": true, "rtspx": true,
-	"rtmp": true, "rtmps": true, "rtmpx": true,
-	"http": true, "https": true, "httpx": true,
-	"onvif": true, "bubble": true, "webrtc": true,
-	"ffmpeg": true, "exec": true, "hass": true,
-	"homekit": true, "dvrip": true, "tapo": true,
-	"kasa": true, "gopro": true, "nest": true,
-	"ring": true, "wyze": true, "isapi": true,
-	"ivideon": true, "roborock": true, "tuya": true,
-}
-
 // schemes where frigate needs ?mp4 suffix on restream path
 var needMP4 = map[string]bool{"bubble": true}
 
@@ -28,26 +15,14 @@ var reIPv4 = regexp.MustCompile(`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
 // Generate builds a complete frigate YAML config with one camera added.
 // If existingConfig is empty, creates config from scratch.
 func Generate(req *Request) (*Response, error) {
-	// Step 1. Validate
 	if req.MainStream == "" {
 		return nil, fmt.Errorf("generate: mainStream required")
 	}
 
-	scheme := urlScheme(req.MainStream)
-	if !supported[scheme] {
-		return nil, fmt.Errorf("generate: unsupported scheme: %s", scheme)
-	}
-
-	if req.SubStream != "" {
-		if s := urlScheme(req.SubStream); !supported[s] {
-			return nil, fmt.Errorf("generate: unsupported sub scheme: %s", s)
-		}
-	}
-
-	// Step 2. Build camera info
+	// Build camera info
 	info := buildInfo(req)
 
-	// Step 3. Ensure detect is enabled when objects are set
+	// Ensure detect is enabled when objects are set
 	if len(req.Objects) > 0 && (req.Detect == nil || !req.Detect.Enabled) {
 		if req.Detect == nil {
 			req.Detect = &DetectConfig{Enabled: true}
@@ -56,7 +31,7 @@ func Generate(req *Request) (*Response, error) {
 		}
 	}
 
-	// Step 4. Generate config
+	// Generate config
 	if strings.TrimSpace(req.ExistingConfig) == "" {
 		config := newConfig(info, req)
 		return &Response{Config: config, Diff: fullDiff(config)}, nil
